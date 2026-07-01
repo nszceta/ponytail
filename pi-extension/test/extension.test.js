@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import ponytailExtension from "../index.js";
+const aliasCommands = ["ponytail-review", "ponytail-audit", "ponytail-debt", "ponytail-gain", "ponytail-help"];
+
+function readRootPackageJson() {
+  return JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
+}
 
 function createPiHarness() {
   const events = new Map();
@@ -60,6 +65,23 @@ test("extension registers Ponytail commands", () => {
   assert.deepEqual([...commands.keys()].sort(), ["ponytail", "ponytail-audit", "ponytail-debt", "ponytail-gain", "ponytail-help", "ponytail-review"]);
 });
 
+test("package manifest exposes OMP-compatible extension entry points", async () => {
+  const manifest = readRootPackageJson();
+
+  assert.deepEqual(manifest.omp, manifest.pi);
+  assert.ok(Array.isArray(manifest.omp.extensions));
+  assert.ok(manifest.omp.extensions.length > 0);
+
+  for (const extensionPath of manifest.omp.extensions) {
+    assert.equal(typeof extensionPath, "string");
+    const extensionUrl = new URL(`../../${extensionPath}`, import.meta.url);
+    assert.equal(existsSync(extensionUrl), true, `${extensionPath} must exist`);
+
+    const extensionModule = await import(extensionUrl.href);
+    assert.equal(typeof extensionModule.default, "function", `${extensionPath} must default-export an extension function`);
+  }
+});
+
 test("/ponytail updates session mode and injects instructions", async () => withTempConfig(async () => {
   const { commands, events, appendedEntries } = createPiHarness();
   const ctx = createCommandContext();
@@ -82,6 +104,7 @@ test("session_start restores latest persisted mode", async () => withTempConfig(
   const ctx = createCommandContext({
     sessionManager: {
       getEntries: () => [
+        { type: "custom", customType: "ponytail-mode", data: { mode: "full" } },
         { type: "custom", customType: "ponytail-mode", data: { mode: "lite" } },
       ],
     },
@@ -93,24 +116,47 @@ test("session_start restores latest persisted mode", async () => withTempConfig(
   assert.ok(result.systemPrompt.includes("lite"));
 }));
 
-test("skill alias commands delegate to Pi skill commands", async () => {
+test("skill alias commands preserve trailing args when delegating to Pi skills", async () => {
   const { commands, sentUserMessages } = createPiHarness();
   const ctx = createCommandContext();
+  const args = "src/app.js --since main";
 
-  await commands.get("ponytail-review").handler("", ctx);
-  await commands.get("ponytail-audit").handler("", ctx);
-  await commands.get("ponytail-debt").handler("", ctx);
-  await commands.get("ponytail-gain").handler("", ctx);
-  await commands.get("ponytail-help").handler("", ctx);
+  for (const commandName of aliasCommands) {
+    await commands.get(commandName).handler(args, ctx);
+  }
 
-  assert.deepEqual(sentUserMessages.map((entry) => entry.text), [
-    "/skill:ponytail-review",
-    "/skill:ponytail-audit",
-    "/skill:ponytail-debt",
-    "/skill:ponytail-gain",
-    "/skill:ponytail-help",
-  ]);
+  assert.deepEqual(sentUserMessages, aliasCommands.map((commandName) => ({
+    text: `/skill:${commandName} ${args}`,
+    options: undefined,
+  })));
 });
+
+test("skill alias commands queue follow-ups with args when context is busy", async () => {
+  const { commands, sentUserMessages } = createPiHarness();
+  const ctx = createCommandContext({ isIdle: () => false });
+  const args = "src/app.js --since main";
+
+  for (const commandName of aliasCommands) {
+    await commands.get(commandName).handler(args, ctx);
+  }
+
+  assert.deepEqual(sentUserMessages, aliasCommands.map((commandName) => ({
+    text: `/skill:${commandName} ${args}`,
+    options: { deliverAs: "followUp" },
+  })));
+});
+
+test("/ponytail off disables persistent instructions", async () => withTempConfig(async () => {
+  const { commands, events } = createPiHarness();
+  const ctx = createCommandContext();
+
+  await events.get("session_start")({ reason: "startup" }, ctx);
+  await commands.get("ponytail").handler("ultra", ctx);
+  await commands.get("ponytail").handler("off", ctx);
+
+  const disabled = await events.get("before_agent_start")({ systemPrompt: "BASE" }, ctx);
+  assert.equal(disabled, undefined);
+}));
 
 test("normal mode disables persistent instructions", async () => withTempConfig(async () => {
   const { commands, events } = createPiHarness();
@@ -141,27 +187,32 @@ test("status bar renders the mode and flips active on agent_start", async () => 
   const statusWrites = [];
   const ctx = createCommandContext({
     sessionManager: { getEntries: () => [{ type: "custom", customType: "ponytail-mode", data: { mode: "ultra" } }] },
-    ui: { notify() {}, setStatus: (key, text) => statusWrites.push({ key, text }), theme: { fg: (_color, text) => text } },
+    ui: { notify() {}, setStatus: (key, text) => statusWrites.push({ key, text }), theme: { fg: (color, text) => `<${color}>${text}</${color}>` } },
   });
 
   await events.get("session_start")({ reason: "resume" }, ctx);
   await events.get("agent_start")({}, ctx);
 
   assert.equal(statusWrites.at(-2).key, "ponytail");
-  assert.match(statusWrites.at(-2).text, /○.*ULTRA/);
-  assert.match(statusWrites.at(-1).text, /●.*ULTRA/);
+  assert.match(statusWrites.at(-2).text, /<dim>○<\/dim>.*<text>🔥 ULTRA<\/text>/);
+  assert.match(statusWrites.at(-1).text, /<accent>●<\/accent>.*<text>🔥 ULTRA<\/text>/);
 }));
 
-test("status bar stays silent when ui lacks a theme", async () => withTempConfig(async () => {
-  const { events } = createPiHarness();
-  const calls = [];
-  const ctx = createCommandContext({
-    sessionManager: { getEntries: () => [{ type: "custom", customType: "ponytail-mode", data: { mode: "ultra" } }] },
-    ui: { notify() {}, setStatus: (_key, text) => calls.push(text) }, // setStatus present, theme absent
-  });
+test("status bar no-ops when ui or theme integration is unavailable", async () => withTempConfig(async () => {
+  const statusWrites = [];
+  const sessionManager = { getEntries: () => [{ type: "custom", customType: "ponytail-mode", data: { mode: "ultra" } }] };
 
-  await events.get("session_start")({ reason: "resume" }, ctx);
-  await events.get("agent_start")({}, ctx);
+  for (const ctx of [
+    createCommandContext({ sessionManager, ui: undefined }),
+    createCommandContext({
+      sessionManager,
+      ui: { notify() {}, setStatus: (_key, text) => statusWrites.push(text) },
+    }),
+  ]) {
+    const { events } = createPiHarness();
+    await events.get("session_start")({ reason: "resume" }, ctx);
+    await events.get("agent_start")({}, ctx);
+  }
 
-  assert.deepEqual(calls, []);
+  assert.deepEqual(statusWrites, []);
 }));

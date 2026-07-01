@@ -5,6 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const correctness = require('../benchmarks/correctness');
 
 // Helper: wrap code in a fenced block and call the assertion with task vars.
@@ -12,6 +13,22 @@ function check(task, lang, code) {
   const output = '```' + lang + '\n' + code + '\n```';
   return correctness(output, { vars: { task } });
 }
+
+function resolveLocalPythonCommand() {
+  for (const command of ['python3', 'python']) {
+    const result = spawnSync(command, ['-c', 'import sys'], { stdio: 'ignore', timeout: 10_000 });
+    if (result.status === 0) return command;
+  }
+  return null;
+}
+
+const pandasSkipReason = (() => {
+  const command = resolveLocalPythonCommand();
+  if (!command) return 'requires local Python to run the pandas CSV positive case';
+
+  const result = spawnSync(command, ['-c', 'import pandas'], { stdio: 'ignore', timeout: 10_000 });
+  return result.status === 0 ? false : `requires ${command} with pandas installed to run the CSV positive case`;
+})();
 
 // --- Email validator ---
 
@@ -74,7 +91,7 @@ test('debounce: immediate-call implementation fails', () => {
 
 // --- CSV sum ---
 
-test('csv: correct pandas one-liner passes', () => {
+test('csv: correct pandas one-liner passes', { skip: pandasSkipReason }, () => {
   const result = check(
     "Write Python code that reads sales.csv and sums the 'amount' column.",
     'python',

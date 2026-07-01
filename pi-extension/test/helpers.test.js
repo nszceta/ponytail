@@ -12,6 +12,46 @@ import {
   writeDefaultMode,
 } from "../index.js";
 
+const expectedSkillNames = ["ponytail", "ponytail-review", "ponytail-audit", "ponytail-debt", "ponytail-gain", "ponytail-help"];
+
+function extractFrontmatter(markdown, skillName) {
+  const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
+  assert.ok(match, `${skillName} must start with YAML frontmatter`);
+  return match[1];
+}
+
+function frontmatterField(frontmatter, fieldName) {
+  const lines = frontmatter.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index].match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (!match || match[1] !== fieldName) continue;
+
+    const inlineValue = match[2].trim();
+    if (inlineValue && inlineValue !== ">" && inlineValue !== "|") {
+      return inlineValue.replace(/^['"]|['"]$/g, "");
+    }
+
+    const blockLines = [];
+    for (let next = index + 1; next < lines.length && /^\s+/.test(lines[next]); next += 1) {
+      blockLines.push(lines[next].trim());
+    }
+    return blockLines.join(" ").trim();
+  }
+
+  return "";
+}
+
+test("skill layout exposes expected OMP skills with names and descriptions", () => {
+  for (const skillName of expectedSkillNames) {
+    const skillPath = new URL(`../../skills/${skillName}/SKILL.md`, import.meta.url);
+    assert.equal(existsSync(skillPath), true, `${skillName} must provide skills/${skillName}/SKILL.md`);
+
+    const frontmatter = extractFrontmatter(readFileSync(skillPath, "utf8"), skillName);
+    assert.equal(frontmatterField(frontmatter, "name"), skillName);
+    assert.match(frontmatterField(frontmatter, "description"), /\S/, `${skillName} must describe when to use the skill`);
+  }
+});
+
 test("parsePonytailCommand falls back to full when invoked bare and default is off", () => {
   assert.deepEqual(parsePonytailCommand("", "off"), { type: "set-mode", mode: "full" });
 });

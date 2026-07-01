@@ -162,6 +162,48 @@ Copilot CLI namespaces plugin commands by plugin name. For example:
 pi install git:github.com/DietrichGebert/ponytail
 ```
 
+### Oh My Pi / OMP
+
+Install from this repository. Pin a branch or tag when testing an unmerged
+build:
+
+```bash
+omp plugin install github:nszceta/ponytail
+omp plugin install github:nszceta/ponytail#feat/omp-compatible-ponytail
+```
+
+Install a development checkout:
+
+```bash
+git clone https://github.com/nszceta/ponytail ~/src/ponytail
+omp plugin link ~/src/ponytail
+```
+
+After an npm release includes OMP support, the package install path is:
+
+```bash
+omp plugin install @dietrichgebert/ponytail
+```
+
+Start a new OMP session after installing, then validate the plugin:
+
+```text
+/ponytail status
+/ponytail lite
+/skill:ponytail-review
+```
+
+Ponytail starts in the configured default mode, currently `full`.
+`/ponytail lite|full|ultra|off` switches the active mode, and
+`/ponytail default lite|full|ultra|off` updates the saved default.
+`PONYTAIL_DEFAULT_MODE` overrides the config file. Exact messages like
+`normal mode` and `stop ponytail` turn active Ponytail instructions off.
+The bundled skills are also available through `/skill:ponytail*`.
+
+Ponytail never overrides OMP system or developer instructions, tool
+policies, approval rules, or completion and evidence requirements. It is a
+coding-style layer below OMP's operating contract.
+
 ### OpenCode
 
 Add to `opencode.json`:
@@ -265,6 +307,7 @@ Which files map to which agent: [Agent portability](docs/agent-portability.md).
 | Codex | `codex plugin remove ponytail` |
 | Devin CLI | `devin plugins remove ponytail` |
 | Pi agent | `pi uninstall ponytail` |
+| Oh My Pi / OMP | `omp plugin uninstall ponytail` |
 | Cursor / Windsurf / Cline / etc. | Delete the copied rule file |
 
 These remove the plugin's own files. They leave behind a small amount of state ponytail writes outside the plugin folder: the mode flag, `~/.config/ponytail/config.json`, and (if you accepted the setup nudge) a `statusLine` entry in `~/.claude/settings.json`. Run `node scripts/uninstall.js` to clean those up too. **Run it before the host remove command above** — the script is itself a plugin file, so removing the plugin first deletes it (or run it from a separate clone of this repo). It only removes the statusLine entry if it points at ponytail's own script, so a statusline you set up yourself is left untouched.
@@ -280,7 +323,7 @@ These remove the plugin's own files. They leave behind a small amount of state p
 | `/ponytail-gain` | Show the measured impact scoreboard (less code, less cost, more speed) from the benchmark. |
 | `/ponytail-help` | Quick reference for the commands above. |
 
-Commands need a skill-capable host (Claude Code, Codex, Devin CLI, OpenCode, Gemini, pi, Swival, Hermes Agent). In Codex they're skills, invoke with `@` (`@ponytail-review`). The instruction-only adapters (Cursor, Windsurf, Cline, Copilot, Kiro, Antigravity) load the always-on ruleset without the commands.
+Commands need a skill-capable host (Claude Code, Codex, Devin CLI, OpenCode, Gemini, pi, OMP, Swival, Hermes Agent). In Codex they're skills, invoke with `@` (`@ponytail-review`). The instruction-only adapters (Cursor, Windsurf, Cline, Copilot, Kiro, Antigravity) load the always-on ruleset without the commands.
 
 ## Development
 
