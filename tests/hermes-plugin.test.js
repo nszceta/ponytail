@@ -151,26 +151,30 @@ print(json.dumps({'ctx': ctx}))
   assert.doesNotMatch(ctx, /^---/);
 });
 
-test('Hermes /ponytail command changes mode and pre_llm_call injects current context', () => {
+test('Hermes /ponytail command persists mode for the next hook process', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ponytail-config-'));
   const output = python(String.raw`
 import importlib.util, json
-spec = importlib.util.spec_from_file_location('ponytail_hermes_plugin', '__init__.py')
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+def load(name):
+    spec = importlib.util.spec_from_file_location(name, '__init__.py')
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 class Ctx:
     def __init__(self):
-        self.hooks = {}
         self.commands = {}
     def register_skill(self, name, path): pass
-    def register_hook(self, name, handler): self.hooks[name] = handler
+    def register_hook(self, name, handler): pass
     def register_command(self, name, handler, description='', args_hint=''):
         self.commands[name] = handler
 ctx = Ctx()
-mod.register(ctx)
+writer = load('ponytail_hermes_writer')
+writer.register(ctx)
 message = ctx.commands['ponytail']('ultra')
-injected = ctx.hooks['pre_llm_call'](session_id='s1', user_message='build it', conversation_history=[], is_first_turn=False, model='m', platform='cli')
+reader = load('ponytail_hermes_reader')
+injected = reader._pre_llm_call(session_id='s1', user_message='build it', conversation_history=[], is_first_turn=False, model='m', platform='cli')
 print(json.dumps({'message': message, 'context': injected['context']}))
-`);
+`, { XDG_CONFIG_HOME: tmp, PONYTAIL_DEFAULT_MODE: 'full' });
   const data = JSON.parse(output);
   assert.match(data.message, /ultra/);
   assert.match(data.context, /PONYTAIL MODE ACTIVE — level: ultra/);

@@ -24,7 +24,8 @@ SKILLS_DIR = ROOT / "skills"
 PONYTAIL_SKILL = SKILLS_DIR / "ponytail" / "SKILL.md"
 REVIEW_SKILL = SKILLS_DIR / "ponytail-review" / "SKILL.md"
 
-_current_mode = None
+STATE_FILE = ".ponytail-active"
+_current_mode: str | None = None
 
 
 def _normalize_runtime_mode(mode: str | None) -> str | None:
@@ -47,6 +48,25 @@ def _config_dir() -> Path:
     if os.name == "nt":
         return Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "ponytail"
     return Path.home() / ".config" / "ponytail"
+
+
+def _state_path() -> Path:
+    return _config_dir() / STATE_FILE
+
+
+def _read_current_mode() -> str | None:
+    if _current_mode:
+        return _current_mode
+    try:
+        return _normalize_runtime_mode(_state_path().read_text(encoding="utf-8"))
+    except OSError:
+        return None
+
+
+def _write_current_mode(mode: str) -> None:
+    path = _state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _ = path.write_text(mode, encoding="utf-8")
 
 
 def _default_mode() -> str:
@@ -123,7 +143,7 @@ def build_injected_context(mode: str | None = None) -> str:
 
 
 def _pre_llm_call(session_id: str = "", **_: Any) -> dict[str, str] | None:
-    mode = _current_mode or _default_mode()
+    mode = _read_current_mode() or _default_mode()
     context = build_injected_context(mode)
     return {"context": context} if context else None
 
@@ -155,7 +175,7 @@ def rewrite_gateway_command(event: Any = None, gateway: Any = None, **_: Any) ->
     text = str(getattr(event, "text", "") or "").strip()
     if not text.startswith("/"):
         return None
-    head, _, rest = text[1:].partition(" ")
+    head, _space, rest = text[1:].partition(" ")
     command = head.replace("_", "-").lower()
     if command not in SKILL_COMMANDS:
         return None
@@ -168,12 +188,13 @@ def _handle_mode_command(raw_args: str) -> str:
     global _current_mode
     arg = (raw_args or "").strip().lower()
     if not arg:
-        mode = _current_mode or _default_mode()
+        mode = _read_current_mode() or _default_mode()
         return f"Ponytail mode: {mode}. Use `/ponytail lite|full|ultra|off`."
     mode = _normalize_runtime_mode(arg)
     if not mode:
         return "Usage: /ponytail [lite|full|ultra|off]"
     _current_mode = mode
+    _write_current_mode(mode)
     return f"Ponytail mode set to {mode}."
 
 
